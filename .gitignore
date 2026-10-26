@@ -1,0 +1,55 @@
+# ---------------------------------------------------------------
+# Unity 工程 .gitignore
+# Library/ Temp/ Logs/ 等都是本机可再生的，绝对不能提交
+# （本工程的 Library 约 1.9 GB）
+# ---------------------------------------------------------------
+
+# --- Unity 生成目录 ---
+[Ll]ibrary/
+[Tt]emp/
+[Oo]bj/
+[Bb]uild/
+[Bb]uilds/
+[Ll]ogs/
+[Uu]ser[Ss]ettings/
+[Mm]emoryCaptures/
+[Rr]ecordings/
+
+# --- 资源 .meta 必须提交，这里只是防止被上面的规则误伤 ---
+!/[Aa]ssets/**/*.meta
+
+# --- IDE / 工程文件 ---
+.vs/
+.idea/
+.vscode/
+*.csproj
+*.unityproj
+*.sln
+*.suo
+*.user
+*.userprefs
+*.pidb
+*.booproj
+*.svd
+*.pdb
+*.mdb
+*.opendb
+*.VC.db
+*.pidb.meta
+*.pdb.meta
+*.mdb.meta
+
+# --- Unity 崩溃报告 ---
+sysinfo.txt
+crashlytics-build.properties
+
+# --- 打包产物 ---
+*.apk
+*.aab
+*.unitypackage
+*.app
+
+# --- 操作系统 ---
+.DS_Store
+Thumbs.db
+desktop.ini
