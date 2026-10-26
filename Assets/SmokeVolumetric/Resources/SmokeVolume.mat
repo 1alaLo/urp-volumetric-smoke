@@ -32,7 +32,7 @@ Material:
     - _Absorption: 1.45
     - _Age: 0
     - _AmbientStrength: 1.25
-    - _Density: 2.4
+    - _Density: 5
     - _DensityMul: 1
     - _EdgeSoftness: 0.42
     - _Fade: 1

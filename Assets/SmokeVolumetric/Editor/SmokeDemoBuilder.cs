@@ -260,7 +260,7 @@ namespace SmokeVolumetric.EditorTools
             mat.SetColor("_ScatterColor", new Color(0.93f, 0.945f, 0.97f, 1f));
             mat.SetColor("_AmbientColor", new Color(0.34f, 0.40f, 0.50f, 1f));
             mat.SetFloat("_AmbientStrength", 1.25f);
-            mat.SetFloat("_Density", 2.4f);
+            mat.SetFloat("_Density", 5.0f);
             mat.SetFloat("_Absorption", 1.45f);
             mat.SetFloat("_NoiseScale", 1.05f);
             mat.SetFloat("_StepCount", 56f);

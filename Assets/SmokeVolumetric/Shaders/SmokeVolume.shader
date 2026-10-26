@@ -9,7 +9,7 @@ Shader "SmokeVolumetric/SmokeVolume"
     {
         _NoiseTex ("Noise (3D)", 3D) = "white" {}
         _NoiseScale ("Noise Scale", Float) = 1.05
-        _Density ("Density", Float) = 2.4
+        _Density ("Density", Float) = 5.0
         _Absorption ("Absorption", Float) = 1.45
         _ScatterColor ("Scatter Color", Color) = (0.93, 0.945, 0.97, 1)
         _AmbientColor ("Ambient Tint", Color) = (0.34, 0.40, 0.50, 1)
@@ -149,10 +149,20 @@ Shader "SmokeVolumetric/SmokeVolume"
                 float core = smoothstep(0.72, 0.12, length(n)) * (0.55 + 0.45 * f);
                 float d = shape * max(shell, core * 0.9);
 
-                // as _Fade drops the cloud erodes into wisps instead of
-                // just turning transparent everywhere
+                // The proxy mesh is an analytic sphere and the march is clipped at
+                // its silhouette, so the field must reach exactly zero just inside
+                // that radius. Keep the band thin: the coarse `shape` term above is
+                // what gives the outline its cauliflower edge, this only removes the
+                // hard circular cut where the proxy sphere truncates it.
+                float pc = length(p - _Center.xyz) * invR;
+                d *= saturate((1.0 - pc) * 30.0);
+
+                // as _Fade drops the cloud erodes into wisps and gets optically
+                // thinner, so the last seconds read as dissipating smoke instead of
+                // a solid ball that pops out of existence
                 float erode = (1.0 - _Fade) * 0.72;
                 d = shape * saturate((d - erode) / max(1e-3, 1.0 - erode));
+                d *= _Fade;
 
                 return pow(saturate(d), 1.05) * _DensityMul;
             }
@@ -221,6 +231,23 @@ Shader "SmokeVolumetric/SmokeVolume"
 
                     if (d > 1e-4)
                     {
+                        // Sub-metre turbulence. Extinction saturates within the first
+                        // metre or so, so the interior only ever shows the nearest
+                        // slice of the field: without this it is a featureless wall.
+                        float3 qf = (p - _Center.xyz) * (3.8 / max(_Radius, 1e-3))
+                                  + float3(0.21, 0.57, 0.83)
+                                  + float3(0.02, -0.08, 0.03) * _Age;
+                        float fine = SAMPLE_TEXTURE3D_LOD(_NoiseTex, sampler_NoiseTex, qf, 0).r;
+
+                        // ...but only within a couple of metres of the camera, and never
+                        // far enough down to open a see-through channel: a ray must stay
+                        // extinct, otherwise geometry leaks through the cloud. Farther
+                        // out the march step is coarser than these features anyway, and
+                        // from outside the detail is not visible.
+                        float detail = saturate(1.0 - t * 0.5);
+                        float mod = 1.0 + (fine - 0.31) * 1.1 * detail;
+                        d *= max(mod, 0.72);
+
                         // cheap light penetration: a few taps toward the sun
                         float od = 0.0;
                         [unroll]
@@ -235,16 +262,17 @@ Shader "SmokeVolumetric/SmokeVolume"
                         // cheap multiple-scattering fill so thick smoke reads as
                         // bright fog instead of going pitch black inside
                         float3 multiScatter = Lcol * (1.0 - sunT) * 0.20;
-                        float3 ambIn = lerp(ambBot, ambTop, saturate(p.y * 0.18 + 0.42));
+                        // Height inside the cloud drives the ambient term: sunlit top,
+                        // shadowed underside. Using the cloud's own normalised height
+                        // (not world Y) is what keeps the interior readable instead of
+                        // flattening into a single grey card.
+                        float hNorm = saturate((p.y - (center.y - radius)) / max(2.0 * radius, 1e-3));
+                        float3 ambIn = lerp(ambBot * 0.50, ambTop * 1.15, pow(hNorm, 1.25));
 
-                        // modulate by the local density: extinction saturates within
-                        // the first metre, so without this the interior collapses to a
-                        // flat grey card instead of showing billowing structure
-                        float3 qf = (p - _Center.xyz) * (2.4 / max(_Radius, 1e-3))
-                                  + float3(0.21, 0.57, 0.83)
-                                  + float3(0.02, -0.08, 0.03) * _Age;
-                        float fine = SAMPLE_TEXTURE3D_LOD(_NoiseTex, sampler_NoiseTex, qf, 0).r;
-                        float shade = 0.62 + 0.85 * d + (fine - 0.31) * 0.90;
+                        // Dense core reads darker than the thin outer wisps: light is
+                        // extinguished before it reaches the middle of the cloud. The
+                        // noise term keeps the interior structured instead of flat.
+                        float shade = 0.98 - 0.30 * d + (fine - 0.31) * 0.95 * detail;
 
                         float3 S = _ScatterColor.rgb * (lightIn + multiScatter + ambIn * _AmbientColor.rgb) * 0.72 * shade;
 
@@ -253,7 +281,7 @@ Shader "SmokeVolumetric/SmokeVolume"
                         scatter += T * S * (1.0 - atten);
                         T *= atten;
 
-                        if (T < 0.015) break;
+                        if (T < 0.004) break;
                     }
                     t += stepLen;
                 }
