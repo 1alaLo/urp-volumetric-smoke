@@ -45,12 +45,9 @@ namespace SmokeVolumetric.EditorTools
             var arena = new GameObject("Arena").transform;
 
             // ---- ground -----------------------------------------------------
-            var floor = GameObject.CreatePrimitive(PrimitiveType.Plane);
-            floor.name = "Ground";
-            floor.transform.SetParent(arena, false);
-            floor.transform.position = Vector3.zero;
-            floor.transform.localScale = new Vector3(4f, 1f, 4f); // 40 x 40 m
-            floor.GetComponent<MeshRenderer>().sharedMaterial = floorMat;
+            // a box rather than a plane: the smoke's voxel field needs a real
+            // solid volume below y=0, otherwise the cloud hangs in the air
+            Box("Ground", new Vector3(0f, -0.2f, 0f), new Vector3(40f, 0.4f, 40f), floorMat, arena);
 
             // ---- perimeter --------------------------------------------------
             Box("Wall_N", new Vector3(0f, 2.5f, 20f), new Vector3(40f, 5f, 0.8f), wallMat, arena);
@@ -86,6 +83,21 @@ namespace SmokeVolumetric.EditorTools
             // ---- reference target behind the cover ---------------------------
             Box("Target", new Vector3(0f, 1.15f, 2f), new Vector3(0.9f, 2.3f, 0.9f), targetMat, arena);
 
+            // ---- smoke room: 5 x 5 x 3.2 m, one doorway facing the arena -----
+            // Proves the two things a sphere cannot do: the cloud stops dead at
+            // the walls, and it pours through the only opening and fills the
+            // room from the inside.
+            var room = new GameObject("SmokeRoom").transform;
+            room.SetParent(arena, false);
+
+            Box("Room_W", new Vector3(-15.5f, 1.6f, -7f), new Vector3(0.4f, 3.2f, 5.4f), wallMat, room);
+            Box("Room_N", new Vector3(-13.0f, 1.6f, -9.5f), new Vector3(5.4f, 3.2f, 0.4f), wallMat, room);
+            Box("Room_S", new Vector3(-13.0f, 1.6f, -4.5f), new Vector3(5.4f, 3.2f, 0.4f), wallMat, room);
+            Box("Room_E_A", new Vector3(-10.5f, 1.6f, -8.9f), new Vector3(0.4f, 3.2f, 1.6f), wallMat, room);
+            Box("Room_E_B", new Vector3(-10.5f, 1.6f, -5.1f), new Vector3(0.4f, 3.2f, 1.6f), wallMat, room);
+            Box("Room_DoorTop", new Vector3(-10.5f, 2.8f, -7f), new Vector3(0.4f, 0.8f, 2.2f), wallMat, room);
+            Box("Room_Roof", new Vector3(-13.0f, 3.35f, -7f), new Vector3(5.4f, 0.3f, 5.4f), wallMat, room);
+
             // ---- player ------------------------------------------------------
             var player = BuildPlayer();
 
@@ -112,7 +124,7 @@ namespace SmokeVolumetric.EditorTools
             if (Physics.Raycast(pivot + Vector3.up * 30f, Vector3.down, out RaycastHit hit, 80f))
                 pivot = hit.point;
 
-            var vol = SmokeVolume.Spawn(pivot, 3.3f, 18f);
+            var vol = SmokeVolume.Spawn(pivot, 3.3f, 18f, false);
             vol.transform.SetParent(null);
             vol.Preview(5f);
 
@@ -193,6 +205,9 @@ namespace SmokeVolumetric.EditorTools
             var fps = player.AddComponent<FpsPlayer>();
             fps.viewCamera = cam;
 
+            var weapon = player.AddComponent<Weapon>();
+            weapon.viewCamera = cam;
+
             return player;
         }
 
@@ -263,7 +278,7 @@ namespace SmokeVolumetric.EditorTools
             mat.SetFloat("_Density", 5.0f);
             mat.SetFloat("_Absorption", 1.45f);
             mat.SetFloat("_NoiseScale", 1.05f);
-            mat.SetFloat("_StepCount", 56f);
+            mat.SetFloat("_StepCount", 80f);
             mat.SetFloat("_EdgeSoftness", 0.42f);
             mat.SetFloat("_ShadowStrength", 1.05f);
 

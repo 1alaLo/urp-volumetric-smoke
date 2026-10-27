@@ -63,10 +63,24 @@ Shader "SmokeVolumetric/SmokeVolume"
             TEXTURE3D(_NoiseTex);
             SAMPLER(sampler_NoiseTex);
 
+            // per-burst scene field: R = distance to solid, G = free-space
+            // distance from the burst point (see SmokeField.cs)
+            TEXTURE3D(_ReachTex);
+            SAMPLER(sampler_ReachTex);
+
+            // global capsule holes: bullet tunnels and explosion craters.
+            // xyz = segment ends, w = radius (A) / remaining life 0..1 (B)
+            float4 _ImpulseA[8];
+            float4 _ImpulseB[8];
+            float  _ImpulseCount;
+
             CBUFFER_START(UnityPerMaterial)
                 float4 _ScatterColor;
                 float4 _AmbientColor;
                 float4 _Center;
+                float4 _GridMin;
+                float4 _GridInv;
+                float4 _GridParams;   // x on, y spread radius, z spread max, w solid max
                 float  _NoiseScale;
                 float  _Density;
                 float  _Absorption;
@@ -110,7 +124,7 @@ Shader "SmokeVolumetric/SmokeVolume"
             // ---------------------------------------------------------------
             // density field
             // ---------------------------------------------------------------
-            float DensityAt(float3 p)
+            float DensityCore(float3 p)
             {
                 float invR = 1.0 / max(_Radius, 1e-3);
                 float3 n = (p - _Center.xyz) * invR;   // local space, -1..1
@@ -167,6 +181,58 @@ Shader "SmokeVolumetric/SmokeVolume"
                 return pow(saturate(d), 1.05) * _DensityMul;
             }
 
+            // How much of the cloud is allowed to exist at p, given the scene.
+            // `reach` is the diffusion front (a BFS distance through free space),
+            // `contact` keeps the field from pressing into geometry.
+            float SceneMask(float3 p)
+            {
+                float3 g = (p - _GridMin.xyz) * _GridInv.xyz;
+                float inside = step(0.0, g.x) * step(g.x, 1.0)
+                             * step(0.0, g.y) * step(g.y, 1.0)
+                             * step(0.0, g.z) * step(g.z, 1.0);
+
+                float4 s = SAMPLE_TEXTURE3D_LOD(_ReachTex, sampler_ReachTex, saturate(g), 0);
+                float solidDist  = s.r * _GridParams.w;
+                float spreadDist = s.g * _GridParams.z;
+
+                float reach   = saturate((_GridParams.y - spreadDist) / 0.55);
+                float contact = saturate(solidDist / 0.14);
+                return reach * contact * inside;
+            }
+
+            // Bullet tunnels / blast craters are capsules carved out of the field.
+            float ImpulseMask(float3 p)
+            {
+                float hole = 0.0;
+                int n = (int)_ImpulseCount;
+                [loop]
+                for (int i = 0; i < n; i++)
+                {
+                    float4 a = _ImpulseA[i];
+                    float4 b = _ImpulseB[i];
+                    float3 ab = b.xyz - a.xyz;
+                    float  t  = saturate(dot(p - a.xyz, ab) / max(dot(ab, ab), 1e-4));
+                    float  dist = length(p - (a.xyz + ab * t));
+                    hole = max(hole, saturate(1.0 - dist / max(a.w, 1e-3)) * b.w);
+                }
+                return hole;
+            }
+
+            float DensityAt(float3 p)
+            {
+                float d = DensityCore(p);
+                if (d <= 0.0)
+                    return 0.0;
+
+                if (_GridParams.x > 0.5)
+                    d *= SceneMask(p);
+
+                if (_ImpulseCount > 0.5)
+                    d *= saturate(1.0 - ImpulseMask(p) * 1.6);
+
+                return d;
+            }
+
             float HenyeyGreenstein(float cosTheta, float g)
             {
                 float g2 = g * g;
@@ -204,8 +270,12 @@ Shader "SmokeVolumetric/SmokeVolume"
                 t1 = min(t1, tScene);       // stop at the first opaque surface
                 if (t1 <= t0) discard;
 
-                int   steps   = (int)clamp(_StepCount, 8.0, 96.0);
-                float stepLen = (t1 - t0) / steps;
+                // adaptive: keep the sample spacing roughly constant so a big
+                // cloud does not turn into visible slices, while short chords
+                // through the edge stay cheap
+                float span    = t1 - t0;
+                int   steps   = (int)clamp(ceil(span * 7.5), 20.0, max(_StepCount, 20.0));
+                float stepLen = span / steps;
 
                 // interleaved gradient noise dither hides the slicing
                 float jitter = frac(52.9829189 * frac(dot(i.positionCS.xy, float2(0.06711056, 0.00583715))));
@@ -248,12 +318,14 @@ Shader "SmokeVolumetric/SmokeVolume"
                         float mod = 1.0 + (fine - 0.31) * 1.1 * detail;
                         d *= max(mod, 0.72);
 
-                        // cheap light penetration: a few taps toward the sun
+                        // cheap light penetration: a few taps toward the sun.
+                        // Deliberately the plain field - the scene mask and the
+                        // hole test would triple the cost of every shadow tap.
                         float od = 0.0;
                         [unroll]
                         for (int k = 1; k <= 3; k++)
                         {
-                            od += DensityAt(p + L * (radius * (0.12 + 0.16 * k)));
+                            od += DensityCore(p + L * (radius * (0.12 + 0.16 * k)));
                         }
                         od *= radius * 0.16 * sigmaT * _ShadowStrength;
                         float sunT = exp(-od);

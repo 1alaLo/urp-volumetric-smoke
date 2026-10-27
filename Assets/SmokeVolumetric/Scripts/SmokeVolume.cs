@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace SmokeVolumetric
@@ -11,18 +12,20 @@ namespace SmokeVolumetric
     [RequireComponent(typeof(MeshRenderer))]
     public class SmokeVolume : MonoBehaviour
     {
-        // ---- tuning (CS2-ish: ~6.5m across, ~18s of coverage) ----
-        public float maxRadius = 3.2f;
+        // ---- tuning (CS2-ish: ~8m across, ~18s of coverage) ----
+        public float maxRadius = 4.2f;
         public float lifetime = 18f;
         public float expandTime = 1.25f;
         public float fadeTime = 3.5f;
         public float startRadius = 0.55f;
-        public float riseDistance = 0.9f;
+        public float riseDistance = 0.55f;
 
         static Material s_Template;
-        static int s_ActiveCount;
 
-        public static int ActiveCount => s_ActiveCount;
+        /// <summary>Every live cloud, so weapons can test rays against them.</summary>
+        public static readonly List<SmokeVolume> All = new List<SmokeVolume>(8);
+
+        public static int ActiveCount => All.Count;
 
         MeshRenderer _renderer;
         MaterialPropertyBlock _mpb;
@@ -31,14 +34,24 @@ namespace SmokeVolumetric
         float _age;
         float _seed;
         float _densityMul;
+        float _spread;
+        float _blast;
+        SmokeField.Reach _reach;
+
+        public float Radius => _radius;
+        public Vector3 Center => transform.position;
 
         static readonly int IdNoiseTex = Shader.PropertyToID("_NoiseTex");
+        static readonly int IdReachTex = Shader.PropertyToID("_ReachTex");
         static readonly int IdCenter = Shader.PropertyToID("_Center");
         static readonly int IdRadius = Shader.PropertyToID("_Radius");
         static readonly int IdAge = Shader.PropertyToID("_Age");
         static readonly int IdFade = Shader.PropertyToID("_Fade");
         static readonly int IdSeed = Shader.PropertyToID("_Seed");
         static readonly int IdDensityMul = Shader.PropertyToID("_DensityMul");
+        static readonly int IdGridMin = Shader.PropertyToID("_GridMin");
+        static readonly int IdGridInv = Shader.PropertyToID("_GridInv");
+        static readonly int IdGridParams = Shader.PropertyToID("_GridParams");
 
         public static Material Template
         {
@@ -60,11 +73,16 @@ namespace SmokeVolumetric
             }
         }
 
-        /// <summary>Spawn a cloud centred on <paramref name="groundCenter"/>.</summary>
-        public static SmokeVolume Spawn(Vector3 groundCenter, float maxRadius = 3.3f, float lifetime = 18f)
+        /// <summary>
+        /// Spawn a cloud. <paramref name="point"/> is the burst point: for an air
+        /// burst the cloud is centred there, for a ground burst it is lifted so
+        /// the sphere sits on the surface instead of half-buried.
+        /// </summary>
+        public static SmokeVolume Spawn(Vector3 point, float maxRadius = 4.2f, float lifetime = 18f,
+                                        bool airBurst = true)
         {
             var go = new GameObject("SmokeVolume");
-            go.transform.position = groundCenter;
+            go.transform.position = point;
             go.layer = 0;
 
             var mf = go.AddComponent<MeshFilter>();
@@ -81,7 +99,7 @@ namespace SmokeVolumetric
             var vol = go.AddComponent<SmokeVolume>();
             vol.maxRadius = maxRadius;
             vol.lifetime = lifetime;
-            vol.Init(groundCenter);
+            vol.Init(point, airBurst);
             return vol;
         }
 
@@ -101,25 +119,75 @@ namespace SmokeVolumetric
             return s_Sphere;
         }
 
-        void Init(Vector3 groundCenter)
+        void Init(Vector3 point, bool airBurst)
         {
             _renderer = GetComponent<MeshRenderer>();
             _mpb = new MaterialPropertyBlock();
-            _origin = groundCenter + Vector3.up * (maxRadius * 0.47f);
+            _origin = airBurst ? point : point + Vector3.up * (maxRadius * 0.47f);
             _radius = startRadius;
+            _spread = startRadius;
             _seed = Random.value;
             _age = 0f;
             _densityMul = 0f;
             transform.position = _origin;
             transform.rotation = Quaternion.Euler(0f, _seed * 360f, 0f);
             transform.localScale = Vector3.one * (startRadius * 2f);
-            s_ActiveCount++;
+
+            // free-space diffusion field for this burst: makes the cloud hug
+            // walls and pour through openings instead of being a clean sphere
+            _reach = SmokeField.BuildReach(point);
+
+            All.Add(this);
             ApplyState();
         }
 
         void OnDestroy()
         {
-            s_ActiveCount = Mathf.Max(0, s_ActiveCount - 1);
+            All.Remove(this);
+
+            if (_reach.texture != null)
+            {
+                if (Application.isPlaying) Destroy(_reach.texture);
+                else DestroyImmediate(_reach.texture);
+                _reach.texture = null;
+            }
+        }
+
+        /// <summary>Ray/sphere test against the cloud's proxy volume.</summary>
+        public bool RaySphere(Vector3 origin, Vector3 dir, out float enter, out float exit)
+        {
+            Vector3 oc = origin - transform.position;
+            float b = Vector3.Dot(oc, dir);
+            float c = oc.sqrMagnitude - _radius * _radius;
+            float h = b * b - c;
+            if (h <= 0f)
+            {
+                enter = exit = 0f;
+                return false;
+            }
+            h = Mathf.Sqrt(h);
+            enter = -b - h;
+            exit = -b + h;
+            return exit > 0f;
+        }
+
+        /// <summary>Explosion near the cloud: puff the proxy outwards for a moment.</summary>
+        public void ApplyBlast(float strength)
+        {
+            _blast = Mathf.Max(_blast, strength);
+        }
+
+        public static void Blast(Vector3 center, float radius, float strength)
+        {
+            for (int i = 0; i < All.Count; i++)
+            {
+                var v = All[i];
+                float dist = Vector3.Distance(center, v.transform.position);
+                float f = 1f - Mathf.Clamp01(dist / (radius + v._radius));
+                if (f <= 0f)
+                    continue;
+                v.ApplyBlast(strength * f);
+            }
         }
 
         /// <summary>Evaluate the cloud at an arbitrary age (used for edit-mode preview).</summary>
@@ -154,6 +222,14 @@ namespace SmokeVolumetric
             float creep = 1f + 0.10f * Mathf.Clamp01(_age / lifetime);
             _radius = Mathf.LerpUnclamped(startRadius, maxRadius, e) * creep;
 
+            // an explosion nearby puffs the proxy outwards for a moment
+            if (_blast > 0.001f)
+            {
+                _blast *= Mathf.Exp(-Time.deltaTime * 2.4f);
+                _radius += _blast;
+            }
+            _spread = _radius;
+
             // erosion fade at the end of life
             float fade = 1f;
             if (_age > lifetime - fadeTime)
@@ -175,6 +251,18 @@ namespace SmokeVolumetric
             _mpb.SetFloat(IdSeed, _seed);
             _mpb.SetFloat(IdDensityMul, _densityMul);
             _mpb.SetTexture(IdNoiseTex, SmokeNoise.Get());
+
+            bool hasGrid = _reach.texture != null;
+            _mpb.SetVector(IdGridParams, new Vector4(
+                hasGrid ? 1f : 0f,
+                _spread,
+                SmokeField.MaxSpread,
+                SmokeField.MaxSolid));
+            _mpb.SetVector(IdGridMin, hasGrid ? (Vector4)_reach.gridMin : Vector4.zero);
+            _mpb.SetVector(IdGridInv, hasGrid ? (Vector4)_reach.gridInv : Vector4.zero);
+            if (hasGrid)
+                _mpb.SetTexture(IdReachTex, _reach.texture);
+
             _renderer.SetPropertyBlock(_mpb);
         }
     }

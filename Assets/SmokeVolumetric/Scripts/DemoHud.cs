@@ -88,7 +88,7 @@ namespace SmokeVolumetric
         {
             const float x = 18f;
             const float y = 18f;
-            const float w = 370f;
+            const float w = 420f;
             const float h = 128f;
 
             var prevColor = GUI.color;
@@ -106,15 +106,18 @@ namespace SmokeVolumetric
 
             GUI.Label(new Rect(tx, ty, w - 20f, 20f), "<b>WASD</b> move   <b>Shift</b> sprint   <b>Space</b> jump", _small);
             ty += 18f;
-            GUI.Label(new Rect(tx, ty, w - 20f, 20f), "<b>LMB</b> throw smoke   <b>RMB</b> drop at your feet", _small);
+            GUI.Label(new Rect(tx, ty, w - 20f, 20f), "<b>LMB</b> fire   <b>RMB</b> smoke grenade   <b>F</b> frag grenade", _small);
             ty += 18f;
             GUI.Label(new Rect(tx, ty, w - 20f, 20f), "<b>C</b> clear smoke   <b>R</b> respawn   <b>Esc</b> free cursor", _small);
             ty += 22f;
 
+            var player = FpsPlayer.Instance;
             string stats = string.Format(
-                "clouds <b>{0}</b>   thrown <b>{1}</b>   {2:0} fps",
+                "clouds <b>{0}</b>   smoke <b>{1}</b>   frags <b>{2}</b>   shots <b>{3}</b>   {4:0} fps",
                 SmokeVolume.ActiveCount,
-                FpsPlayer.Instance != null ? FpsPlayer.Instance.GrenadesThrown : 0,
+                player != null ? player.GrenadesThrown : 0,
+                player != null ? player.FragsThrown : 0,
+                player != null ? player.ShotsFired : 0,
                 _fps);
 
             GUI.Label(new Rect(tx, ty, w - 20f, 20f), stats, _small);

@@ -43,7 +43,7 @@ Material:
     - _RiseSpeed: 0.26
     - _Seed: 0
     - _ShadowStrength: 1.05
-    - _StepCount: 56
+    - _StepCount: 80
     - _Swirl: 0.45
     m_Colors:
     - _AmbientColor: {r: 0.34, g: 0.4, b: 0.5, a: 1}

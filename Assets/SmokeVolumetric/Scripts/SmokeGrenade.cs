@@ -3,18 +3,21 @@ using UnityEngine;
 namespace SmokeVolumetric
 {
     /// <summary>
-    /// Throwable smoke grenade: rigidbody projectile with a short fuse that
-    /// detonates into a <see cref="SmokeVolume"/>.
+    /// Smoke grenade: a ballistic projectile that pops in mid-air at the aimed
+    /// point and leaves a <see cref="SmokeVolume"/> there. The fuse is set to the
+    /// flight time, so the burst happens exactly at the aim point - never after
+    /// bouncing along the floor.
     /// </summary>
     [RequireComponent(typeof(Rigidbody))]
     public class SmokeGrenade : MonoBehaviour
     {
-        public float fuse = 1.55f;
-        public float cloudRadius = 3.3f;
+        public float cloudRadius = 4.2f;
         public float cloudLifetime = 18f;
 
         static Material s_BodyMaterial;
         float _spawnTime;
+        float _fuse;
+        bool _spent;
 
         public static Material BodyMaterial
         {
@@ -24,7 +27,7 @@ namespace SmokeVolumetric
                 {
                     var shader = Shader.Find("Universal Render Pipeline/Lit");
                     s_BodyMaterial = new Material(shader) { name = "GrenadeBody" };
-                    s_BodyMaterial.SetColor("_BaseColor", new Color(0.24f, 0.30f, 0.24f));
+                    s_BodyMaterial.SetColor("_BaseColor", new Color(0.24f, 0.34f, 0.26f));
                     s_BodyMaterial.SetFloat("_Smoothness", 0.55f);
                     s_BodyMaterial.SetFloat("_Metallic", 0.25f);
                 }
@@ -32,11 +35,12 @@ namespace SmokeVolumetric
             }
         }
 
-        public static SmokeGrenade Throw(Vector3 position, Vector3 velocity, float fuse = 1.55f)
+        public static SmokeGrenade Throw(Vector3 from, Vector3 to, float flightTime,
+                                         float cloudRadius = 4.2f, float cloudLifetime = 18f)
         {
             var go = GameObject.CreatePrimitive(PrimitiveType.Sphere);
             go.name = "SmokeGrenade";
-            go.transform.position = position;
+            go.transform.position = from;
             go.transform.localScale = Vector3.one * 0.16f;
 
             var mr = go.GetComponent<MeshRenderer>();
@@ -53,11 +57,13 @@ namespace SmokeVolumetric
             rb.angularDamping = 0.15f;
             rb.collisionDetectionMode = CollisionDetectionMode.ContinuousDynamic;
             rb.interpolation = RigidbodyInterpolation.Interpolate;
-            rb.linearVelocity = velocity;
+            rb.linearVelocity = Ballistics.VelocityFor(from, to, flightTime);
             rb.angularVelocity = Random.insideUnitSphere * 12f;
 
             var grenade = go.AddComponent<SmokeGrenade>();
-            grenade.fuse = fuse;
+            grenade.cloudRadius = cloudRadius;
+            grenade.cloudLifetime = cloudLifetime;
+            grenade._fuse = flightTime;
             grenade._spawnTime = Time.time;
             return grenade;
         }
@@ -84,22 +90,30 @@ namespace SmokeVolumetric
 
         void Update()
         {
-            if (Time.time - _spawnTime < fuse)
-                return;
+            if (Time.time - _spawnTime >= _fuse)
+                Detonate();
+        }
 
-            Detonate();
+        void OnCollisionEnter(Collision collision)
+        {
+            // clipped a wall or a crate on the way: pop where it hit, but not
+            // during the first fraction of a second (that is the throw itself)
+            if (Time.time - _spawnTime > 0.3f)
+                Detonate();
         }
 
         void Detonate()
         {
-            Vector3 origin = transform.position;
+            if (_spent)
+                return;
+            _spent = true;
 
-            // settle the cloud on whatever surface is underneath
-            if (Physics.Raycast(origin + Vector3.up * 0.5f, Vector3.down, out RaycastHit hit, 6f, ~0, QueryTriggerInteraction.Ignore))
-                origin = hit.point;
+            Vector3 burst = transform.position;
+            SmokeVolume vol = SmokeVolume.Spawn(burst, cloudRadius, cloudLifetime, true);
+            SmokeFx.Pop(burst, 0.9f);
 
-            SmokeVolume.Spawn(origin, cloudRadius, cloudLifetime);
             Destroy(gameObject);
+            vol.transform.SetParent(null);
         }
     }
 }

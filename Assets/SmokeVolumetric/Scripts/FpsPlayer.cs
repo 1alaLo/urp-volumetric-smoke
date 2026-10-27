@@ -30,17 +30,20 @@ namespace SmokeVolumetric
             get
             {
                 if (s_Instance == null)
-                    s_Instance = FindFirstObjectByType<FpsPlayer>();
+                    s_Instance = FindAnyObjectByType<FpsPlayer>();
                 return s_Instance;
             }
             private set => s_Instance = value;
         }
 
         public int GrenadesThrown { get; private set; }
+        public int FragsThrown { get; private set; }
+        public int ShotsFired => _weapon != null ? _weapon.ShotsFired : 0;
         public float CooldownRemaining => Mathf.Max(0f, _nextThrow - Time.time);
         public float BobOffset { get; private set; }
 
         CharacterController _cc;
+        Weapon _weapon;
         float _pitch;
         float _yaw;
         float _verticalVelocity;
@@ -50,6 +53,10 @@ namespace SmokeVolumetric
         Quaternion _spawnRotation;
         Camera _cam;
         Vector3 _camLocalPos;
+
+        float _shakeAmp;
+        float _shakeTime;
+        float _shakeDur;
 
         void Awake()
         {
@@ -67,6 +74,12 @@ namespace SmokeVolumetric
 
             if (_cam != null)
                 _camLocalPos = _cam.transform.localPosition;
+
+            _weapon = GetComponent<Weapon>();
+            if (_weapon == null)
+                _weapon = gameObject.AddComponent<Weapon>();
+            if (_weapon.viewCamera == null)
+                _weapon.viewCamera = _cam;
 
             LockCursor(true);
         }
@@ -136,19 +149,31 @@ namespace SmokeVolumetric
 
             _cc.Move(move * Time.deltaTime);
 
-            // ---- camera bob ----
+            // ---- camera bob + shake ----
             float planarSpeed = new Vector2(_cc.velocity.x, _cc.velocity.z).magnitude;
             _bobPhase += Time.deltaTime * (planarSpeed > 0.2f && _cc.isGrounded ? (sprinting ? 11f : 8f) : 0f);
             BobOffset = Mathf.Sin(_bobPhase) * 0.022f * Mathf.Clamp01(planarSpeed / walkSpeed);
+
+            Vector3 shakeOffset = Vector3.zero;
+            if (_shakeTime > 0f)
+            {
+                _shakeTime -= Time.deltaTime;
+                float k = Mathf.Clamp01(_shakeTime / Mathf.Max(0.01f, _shakeDur));
+                shakeOffset = Random.insideUnitSphere * (_shakeAmp * k * k);
+            }
+
             if (_cam != null)
-                _cam.transform.localPosition = _camLocalPos + Vector3.up * BobOffset;
+                _cam.transform.localPosition = _camLocalPos + Vector3.up * BobOffset + shakeOffset;
 
             // ---- actions ----
-            if (locked && mouse != null && mouse.leftButton.wasPressedThisFrame && Time.time >= _nextThrow)
-                ThrowGrenade(false);
+            if (locked && mouse != null && mouse.leftButton.wasPressedThisFrame)
+                _weapon.TryFire();
 
-            if (locked && mouse != null && mouse.rightButton.wasPressedThisFrame && Time.time >= _nextThrow)
-                ThrowGrenade(true);
+            if (locked && mouse != null && mouse.rightButton.wasPressedThisFrame)
+                ThrowSmoke();
+
+            if (locked && kb.fKey.wasPressedThisFrame)
+                ThrowFrag();
 
             if (locked && kb.cKey.wasPressedThisFrame)
                 ClearSmoke();
@@ -157,31 +182,114 @@ namespace SmokeVolumetric
                 Respawn();
         }
 
-        void ThrowGrenade(bool dropAtFeet)
+        public void AddShake(float amplitude, float duration)
         {
+            if (amplitude <= 0f)
+                return;
+
+            if (_shakeTime <= 0f)
+                _shakeAmp = 0f;
+            _shakeAmp = Mathf.Max(_shakeAmp, amplitude);
+            _shakeDur = Mathf.Max(0.02f, duration);
+            _shakeTime = _shakeDur;
+        }
+
+        /// <summary>
+        /// Where a thrown canister should pop: at the aimed surface, at least
+        /// <paramref name="minRange"/> away, and floating at least
+        /// <paramref name="minHeight"/> above whatever is below it.
+        /// </summary>
+        Vector3 SolveBurstPoint(float minRange, float maxRange, float minHeight)
+        {
+            Transform aim = _cam != null ? _cam.transform : transform;
+            Vector3 origin = aim.position;
+            Vector3 dir = aim.forward;
+
+            float dist = maxRange;
+            if (Physics.Raycast(origin, dir, out RaycastHit hit, maxRange, ~0, QueryTriggerInteraction.Ignore)
+                && !IsSelf(hit.collider))
+            {
+                dist = Mathf.Clamp(hit.distance, minRange, maxRange);
+            }
+
+            // If the crosshair is resting on smoke, burst where the ray enters
+            // that cloud. Physics ignores the volume, so without this a grenade
+            // sails through the puff and pops on the wall behind it - the blast
+            // would then be hidden behind several metres of opaque smoke.
+            var clouds = SmokeVolume.All;
+            for (int i = 0; i < clouds.Count; i++)
+            {
+                var vol = clouds[i];
+                if (vol == null || !vol.RaySphere(origin, dir, out float enter, out float exit))
+                    continue;
+                if (enter <= 0f || enter >= dist)
+                    continue;
+
+                dist = Mathf.Clamp(enter + 0.2f, minRange, maxRange);
+                break;
+            }
+
+            Vector3 p = origin + dir * dist;
+            p.y = Mathf.Max(p.y, GroundBelow(p) + minHeight);
+
+            // never pop inside a wall - walk the point back along the aim ray
+            for (int i = 0; i < 8; i++)
+            {
+                if (!Physics.CheckSphere(p, 0.45f, ~0, QueryTriggerInteraction.Ignore))
+                    break;
+                p -= dir * 0.6f;
+                p.y = Mathf.Max(p.y, GroundBelow(p) + minHeight);
+            }
+
+            return p;
+        }
+
+        float GroundBelow(Vector3 p)
+        {
+            Vector3 from = p + Vector3.up * 0.5f;
+            if (Physics.Raycast(from, Vector3.down, out RaycastHit hit, 30f, ~0, QueryTriggerInteraction.Ignore)
+                && !IsSelf(hit.collider))
+            {
+                return hit.point.y;
+            }
+            return 0f;
+        }
+
+        bool IsSelf(Collider c)
+        {
+            return c.transform == transform || c.transform.IsChildOf(transform);
+        }
+
+        void ThrowSmoke()
+        {
+            if (Time.time < _nextThrow)
+                return;
+
             _nextThrow = Time.time + throwCooldown;
             GrenadesThrown++;
 
             Transform aim = _cam != null ? _cam.transform : transform;
-            Vector3 origin = aim.position + aim.forward * 0.45f - Vector3.up * 0.08f;
+            Vector3 target = SolveBurstPoint(6f, 13f, 1.5f);
+            Vector3 from = aim.position + aim.forward * 0.45f - Vector3.up * 0.06f;
+            float flight = Mathf.Lerp(0.95f, 1.45f, Mathf.InverseLerp(6f, 13f, Vector3.Distance(from, target)));
 
-            Vector3 velocity;
-            if (dropAtFeet)
-            {
-                origin = transform.position + Vector3.up * 0.6f + transform.forward * 0.5f;
-                velocity = transform.forward * 2.2f;
-            }
-            else
-            {
-                velocity = aim.forward * 13.5f + Vector3.up * 2.4f;
-            }
+            SmokeGrenade.Throw(from, target, flight);
+        }
 
-            // carry a bit of the player's momentum
-            Vector3 planar = _cc.velocity;
-            planar.y = 0f;
-            velocity += planar * 0.35f;
+        void ThrowFrag()
+        {
+            if (Time.time < _nextThrow)
+                return;
 
-            SmokeGrenade.Throw(origin, velocity, dropAtFeet ? 0.9f : 1.55f);
+            _nextThrow = Time.time + throwCooldown;
+            FragsThrown++;
+
+            Transform aim = _cam != null ? _cam.transform : transform;
+            Vector3 target = SolveBurstPoint(5f, 12f, 1.2f);
+            Vector3 from = aim.position + aim.forward * 0.45f - Vector3.up * 0.06f;
+            float flight = Mathf.Lerp(0.9f, 1.35f, Mathf.InverseLerp(5f, 12f, Vector3.Distance(from, target)));
+
+            FragGrenade.Throw(from, target, flight);
         }
 
         void ClearSmoke()
