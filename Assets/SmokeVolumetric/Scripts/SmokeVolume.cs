@@ -22,6 +22,9 @@ namespace SmokeVolumetric
 
         static Material s_Template;
 
+        /// <summary>Blast volumes remembered per cloud (local, permanent erosion).</summary>
+        public const int MaxBlasts = 4;
+
         /// <summary>Every live cloud, so weapons can test rays against them.</summary>
         public static readonly List<SmokeVolume> All = new List<SmokeVolume>(8);
 
@@ -36,8 +39,12 @@ namespace SmokeVolumetric
         float _densityMul;
         float _spread;
         float _blast;
-        float _damage;
         SmokeField.Reach _reach;
+
+        readonly Vector4[] _blastA = new Vector4[MaxBlasts];
+        readonly float[] _blastStrength = new float[MaxBlasts];
+        int _blastCount;
+        int _blastCursor;
 
         public float Radius => _radius;
         public Vector3 Center => transform.position;
@@ -53,6 +60,12 @@ namespace SmokeVolumetric
         static readonly int IdGridMin = Shader.PropertyToID("_GridMin");
         static readonly int IdGridInv = Shader.PropertyToID("_GridInv");
         static readonly int IdGridParams = Shader.PropertyToID("_GridParams");
+        static readonly int IdBlastA0 = Shader.PropertyToID("_BlastA0");
+        static readonly int IdBlastA1 = Shader.PropertyToID("_BlastA1");
+        static readonly int IdBlastA2 = Shader.PropertyToID("_BlastA2");
+        static readonly int IdBlastA3 = Shader.PropertyToID("_BlastA3");
+        static readonly int IdBlastStrength = Shader.PropertyToID("_BlastStrength");
+        static readonly int IdBlastCount = Shader.PropertyToID("_BlastCount");
 
         public static Material Template
         {
@@ -173,18 +186,24 @@ namespace SmokeVolumetric
         }
 
         /// <summary>
-        /// Explosion near the cloud: shove the proxy outwards for a moment and
-        /// permanently tear most of its density away. A blast should disperse a
-        /// smoke cloud, not inflate it into a bigger (and even more opaque) ball.
+        /// Explosion near the cloud: register the blast volume that overlaps this
+        /// cloud. Only the smoke inside that volume is eaten; the rest of the puff
+        /// keeps its size and density. The volume lives for the rest of the
+        /// cloud's lifetime, so the hole does not silently refill.
         /// </summary>
-        public void ApplyBlast(float strength)
+        public void ApplyBlast(Vector3 center, float radius, float strength)
         {
             strength = Mathf.Clamp01(strength);
             if (strength <= 0f)
                 return;
 
+            _blastA[_blastCursor] = new Vector4(center.x, center.y, center.z, Mathf.Max(0.1f, radius));
+            _blastStrength[_blastCursor] = strength;
+            _blastCursor = (_blastCursor + 1) % MaxBlasts;
+            _blastCount = Mathf.Min(_blastCount + 1, MaxBlasts);
+
+            // one short outward shove while the smoke is displaced
             _blast = Mathf.Max(_blast, strength);
-            _damage = Mathf.Clamp01(_damage + strength * 1.8f);
         }
 
         public static void Blast(Vector3 center, float radius, float strength)
@@ -192,11 +211,10 @@ namespace SmokeVolumetric
             for (int i = 0; i < All.Count; i++)
             {
                 var v = All[i];
-                float dist = Vector3.Distance(center, v.transform.position);
-                float f = 1f - Mathf.Clamp01(dist / (radius + v._radius));
-                if (f <= 0f)
+                float reach = radius + v._radius;
+                if ((center - v.transform.position).sqrMagnitude > reach * reach)
                     continue;
-                v.ApplyBlast(strength * f * f);
+                v.ApplyBlast(center, radius, strength);
             }
         }
 
@@ -232,14 +250,12 @@ namespace SmokeVolumetric
             float creep = 1f + 0.10f * Mathf.Clamp01(_age / lifetime);
             _radius = Mathf.LerpUnclamped(startRadius, maxRadius, e) * creep;
 
-            // a blast permanently collapses the shell it tore open
-            _radius *= Mathf.Lerp(1f, 0.60f, _damage);
-
-            // ...and gives it one short outward kick while the smoke blows apart
+            // a blast only gives the shell one short outward kick; the hole
+            // itself is carved by the local blast volume in the shader
             if (_blast > 0.001f)
             {
                 _blast *= Mathf.Exp(-Time.deltaTime * 3.2f);
-                _radius += _blast * 0.7f;
+                _radius += _blast * 0.35f;
             }
             _spread = _radius;
 
@@ -249,10 +265,8 @@ namespace SmokeVolumetric
                 fade = Mathf.Clamp01(1f - (_age - (lifetime - fadeTime)) / fadeTime);
             fade = Mathf.SmoothStep(0f, 1f, fade);
 
-            // density ramps in quickly but not instantly, and a blast leaves
-            // behind only thin wisps instead of a denser, bigger cloud
-            _densityMul = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(_age / 0.30f))
-                        * Mathf.Lerp(1f, 0.06f, _damage);
+            // density ramps in quickly but not instantly
+            _densityMul = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(_age / 0.30f));
 
             // gentle buoyancy
             float rise = riseDistance * (1f - Mathf.Exp(-_age * 0.35f));
@@ -266,6 +280,14 @@ namespace SmokeVolumetric
             _mpb.SetFloat(IdSeed, _seed);
             _mpb.SetFloat(IdDensityMul, _densityMul);
             _mpb.SetTexture(IdNoiseTex, SmokeNoise.Get());
+
+            _mpb.SetVector(IdBlastA0, _blastA[0]);
+            _mpb.SetVector(IdBlastA1, _blastA[1]);
+            _mpb.SetVector(IdBlastA2, _blastA[2]);
+            _mpb.SetVector(IdBlastA3, _blastA[3]);
+            _mpb.SetVector(IdBlastStrength, new Vector4(
+                _blastStrength[0], _blastStrength[1], _blastStrength[2], _blastStrength[3]));
+            _mpb.SetFloat(IdBlastCount, _blastCount);
 
             bool hasGrid = _reach.texture != null;
             _mpb.SetVector(IdGridParams, new Vector4(

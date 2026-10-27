@@ -88,12 +88,6 @@ namespace SmokeVolumetric
             Push();
         }
 
-        /// <summary>A blast clears a sphere: big radius, short life, wide opening.</summary>
-        public static void AddExplosion(Vector3 center, float radius)
-        {
-            Add(center, center, radius, 1.3f);
-        }
-
         public static void Clear()
         {
             for (int i = 0; i < Max; i++)

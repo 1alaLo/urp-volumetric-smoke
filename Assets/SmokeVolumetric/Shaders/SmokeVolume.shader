@@ -27,6 +27,12 @@ Shader "SmokeVolumetric/SmokeVolume"
         _Radius ("Radius (world)", Float) = 3
         _Seed ("Seed", Float) = 0
         _ShadowStrength ("Self Shadow", Range(0, 3)) = 1.35
+        _BlastA0 ("Blast 0", Vector) = (0, 0, 0, 0)
+        _BlastA1 ("Blast 1", Vector) = (0, 0, 0, 0)
+        _BlastA2 ("Blast 2", Vector) = (0, 0, 0, 0)
+        _BlastA3 ("Blast 3", Vector) = (0, 0, 0, 0)
+        _BlastStrength ("Blast Strengths", Vector) = (0, 0, 0, 0)
+        _BlastCount ("Blast Count", Float) = 0
     }
 
     SubShader
@@ -68,11 +74,17 @@ Shader "SmokeVolumetric/SmokeVolume"
             TEXTURE3D(_ReachTex);
             SAMPLER(sampler_ReachTex);
 
-            // global capsule holes: bullet tunnels and explosion craters.
+            // global capsule holes: bullet tunnels.
             // xyz = segment ends, w = radius (A) / remaining life 0..1 (B)
             float4 _ImpulseA[8];
             float4 _ImpulseB[8];
             float  _ImpulseCount;
+
+            // per-cloud blast volumes: local, persistent density loss. A blast
+            // eats the part of the cloud it overlaps instead of shrinking the
+            // whole puff (xyz = centre, w = radius; _BlastStrength = 0..1).
+            // Packed as scalars on purpose: per-renderer MPB overrides of
+            // arrays proved unreliable here.
 
             CBUFFER_START(UnityPerMaterial)
                 float4 _ScatterColor;
@@ -97,6 +109,12 @@ Shader "SmokeVolumetric/SmokeVolume"
                 float  _Radius;
                 float  _Seed;
                 float  _ShadowStrength;
+                float4 _BlastA0;
+                float4 _BlastA1;
+                float4 _BlastA2;
+                float4 _BlastA3;
+                float4 _BlastStrength;
+                float  _BlastCount;
             CBUFFER_END
 
             struct Attributes
@@ -200,22 +218,28 @@ Shader "SmokeVolumetric/SmokeVolume"
                 return reach * contact * inside;
             }
 
-            // Bullet tunnels / blast craters are capsules carved out of the field.
-            // A clean capsule reads as a laser-cut cylinder, so the wall of the
-            // hole is displaced by noise and broken into lobes: the channel stays
-            // clear at its core while the rim frays into torn wisps.
+            // Bullet tunnels are capsules carved out of the field. The wall of
+            // the hole is displaced by a single coherent noise tap (features of
+            // ~1.5 m) plus a slow angular lobe, then feathered by a smoothstep:
+            // the channel stays open, the rim frays into torn wisps, and the
+            // edge no longer reads as a high-frequency noise texture.
             float ImpulseMask(float3 p)
             {
                 int n = (int)_ImpulseCount;
                 if (n <= 0)
                     return 0.0;
 
-                // one shared noise tap (features ~0.4 m) instead of one per hole
+                // two coherent taps: a broad one that tilts the whole bore, and
+                // a finer one whose features are comparable to the hole itself
+                // so the silhouette actually tears instead of staying a circle
                 float rough = SAMPLE_TEXTURE3D_LOD(_NoiseTex, sampler_NoiseTex,
-                                                   p * 2.25 + float3(0.17, 0.53, 0.81), 0).r;
+                                                   p * 0.62 + float3(0.17, 0.53, 0.81), 0).r;
+                float fine = SAMPLE_TEXTURE3D_LOD(_NoiseTex, sampler_NoiseTex,
+                                                  p * 1.30 + float3(0.71, 0.29, 0.47), 0).r;
 
-                // cheap high-frequency breakup, used to chew the rim
-                float tear = 0.5 + 0.5 * sin(p.x * 11.7 + p.y * 7.3 + p.z * 9.1 + rough * 12.6);
+                // slow undulation along the shaft: period ~2 m, derived from the
+                // same tap so the rim opens in big soft bites, not static
+                float axial = 0.5 + 0.5 * sin(dot(p, float3(2.3, 1.7, 2.9)) + rough * 5.0);
 
                 float hole = 0.0;
                 [loop]
@@ -228,18 +252,61 @@ Shader "SmokeVolumetric/SmokeVolume"
                     float3 c  = a.xyz + ab * t;
                     float  dist = length(p - c);
 
-                    // angular lobes + noise-displaced radius: the tunnel is not round
+                    // gentle oval + coherent wobble: the bore stays recognisably
+                    // cylindrical while its wall breathes in and out
                     float ang = atan2(p.z - c.z, p.x - c.x);
-                    float lobe = 0.74 + 0.50 * rough + 0.18 * sin(ang * 5.0 + i * 1.9);
+                    float lobe = 1.0 + 0.26 * (rough - 0.5) + 0.24 * (fine - 0.5)
+                               + 0.09 * sin(ang * 3.0 + i * 2.1)
+                               + 0.05 * sin(ang * 5.0 - i * 1.3);
                     float radius = max(a.w * lobe, 1e-3);
 
-                    // pull the isosurface in and out along the shaft so the hole
-                    // opens in ragged chunks instead of a perfect cone
-                    dist += (tear - 0.5) * a.w * 0.55;
+                    // slow undulation along the shaft so the opening bites in
+                    // and out instead of extruding one static cross-section
+                    dist += (axial - 0.5) * a.w * 0.55;
 
-                    hole = max(hole, saturate(1.0 - dist / radius) * b.w);
+                    // small clear core with a long frazzled shoulder: the bullet
+                    // punches through, and the rim frays out into thinned wisps
+                    float k = dist / radius;
+                    float core = 1.0 - smoothstep(0.68, 1.0, k);
+                    hole = max(hole, core * b.w);
                 }
                 return hole;
+            }
+
+            // Local blast erosion: a blast volume removes the smoke it overlaps
+            // and leaves the rest of the cloud intact. The radius is pushed
+            // around by low-frequency noise so the cavity is an irregular bite,
+            // not a clean sphere.
+            float BlastAt(float3 p, float4 s, float strength, float rough)
+            {
+                if (s.w <= 0.0 || strength <= 0.0)
+                    return 0.0;
+
+                float3 d = p - s.xyz;
+                d.y *= 1.15;                           // slightly flattened burst
+                float rad = max(s.w * (0.80 + 0.40 * rough), 1e-3);
+                // open cavity out to ~40% of the radius, then a soft, slightly
+                // ragged shoulder: smoke disappears where the blast hits and
+                // thins out towards the edge of the sphere
+                float k = length(d) / rad;
+                return (1.0 - smoothstep(0.40, 1.0, k)) * strength;
+            }
+
+            float BlastMask(float3 p)
+            {
+                int n = (int)_BlastCount;
+                if (n <= 0)
+                    return 0.0;
+
+                float rough = SAMPLE_TEXTURE3D_LOD(_NoiseTex, sampler_NoiseTex,
+                                                   p * 0.42 + float3(0.61, 0.23, 0.87), 0).r;
+
+                float m = 0.0;
+                if (n > 0) m = max(m, BlastAt(p, _BlastA0, _BlastStrength.x, rough));
+                if (n > 1) m = max(m, BlastAt(p, _BlastA1, _BlastStrength.y, rough));
+                if (n > 2) m = max(m, BlastAt(p, _BlastA2, _BlastStrength.z, rough));
+                if (n > 3) m = max(m, BlastAt(p, _BlastA3, _BlastStrength.w, rough));
+                return m;
             }
 
             float DensityAt(float3 p)
@@ -251,8 +318,11 @@ Shader "SmokeVolumetric/SmokeVolume"
                 if (_GridParams.x > 0.5)
                     d *= SceneMask(p);
 
+                if (_BlastCount > 0.5)
+                    d *= saturate(1.0 - BlastMask(p) * 1.15);
+
                 if (_ImpulseCount > 0.5)
-                    d *= saturate(1.0 - ImpulseMask(p) * 1.7);
+                    d *= saturate(1.0 - ImpulseMask(p) * 1.35);
 
                 return d;
             }

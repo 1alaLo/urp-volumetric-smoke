@@ -12,7 +12,7 @@ namespace SmokeVolumetric
         public Camera viewCamera;
         public float roundsPerSecond = 8f;
         public float range = 140f;
-        public float holeRadius = 0.30f;
+        public float holeRadius = 0.45f;
         public float holeLife = 1.1f;
         public float recoil = 0.045f;
 

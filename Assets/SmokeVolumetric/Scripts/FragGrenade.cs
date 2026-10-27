@@ -4,15 +4,14 @@ namespace SmokeVolumetric
 {
     /// <summary>
     /// Frag grenade: same ballistic throw as the smoke canister, but it detonates
-    /// into a blast that carves a crater through any smoke cloud and puffs the
-    /// surviving volume outwards.
+    /// into a blast that eats the part of any smoke cloud it overlaps, leaving
+    /// the rest of the puff intact.
     /// </summary>
     [RequireComponent(typeof(Rigidbody))]
     public class FragGrenade : MonoBehaviour
     {
         public float blastRadius = 5f;
-        public float smokePushRadius = 10f;
-        public float smokePushStrength = 1f;
+        public float smokeBlastRadius = 3.2f;
 
         static Material s_BodyMaterial;
         float _spawnTime;
@@ -83,8 +82,7 @@ namespace SmokeVolumetric
             Vector3 p = transform.position;
 
             SmokeFx.Explosion(p, 1f);
-            SmokeImpulses.AddExplosion(p, blastRadius);
-            SmokeVolume.Blast(p, smokePushRadius, smokePushStrength);
+            SmokeVolume.Blast(p, smokeBlastRadius, 1f);
 
             // shove loose rigidbodies around, purely for the demo feel
             var bodies = FindObjectsByType<Rigidbody>();

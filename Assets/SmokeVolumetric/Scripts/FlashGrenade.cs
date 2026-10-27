@@ -4,15 +4,15 @@ namespace SmokeVolumetric
 {
     /// <summary>
     /// Flashbang: same ballistic throw as the frag, but its payoff is a blinding
-    /// screen flash instead of a crater. It only nudges smoke with a weak blast
-    /// wave, so the two throwables read completely differently.
+    /// screen flash instead of a crater. It only nibbles the smoke it lands in,
+    /// so the two throwables read completely differently.
     /// </summary>
     [RequireComponent(typeof(Rigidbody))]
     public class FlashGrenade : MonoBehaviour
     {
         public float flashRadius = 15f;
-        public float smokePushRadius = 7f;
-        public float smokePushStrength = 0.30f;
+        public float smokeBlastRadius = 3.5f;
+        public float smokeBlastStrength = 0.30f;
 
         static Material s_BodyMaterial;
         float _spawnTime;
@@ -83,8 +83,8 @@ namespace SmokeVolumetric
             Vector3 p = transform.position;
             SmokeFx.Flash(p);
 
-            // a flashbang barely disturbs smoke: no crater, just a soft wave
-            SmokeVolume.Blast(p, smokePushRadius, smokePushStrength);
+            // a flashbang barely disturbs smoke: a weak local bite, no crater
+            SmokeVolume.Blast(p, smokeBlastRadius, smokeBlastStrength);
 
             var player = FpsPlayer.Instance;
             if (player != null && player.viewCamera != null)
