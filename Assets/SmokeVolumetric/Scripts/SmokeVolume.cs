@@ -36,6 +36,7 @@ namespace SmokeVolumetric
         float _densityMul;
         float _spread;
         float _blast;
+        float _damage;
         SmokeField.Reach _reach;
 
         public float Radius => _radius;
@@ -171,10 +172,19 @@ namespace SmokeVolumetric
             return exit > 0f;
         }
 
-        /// <summary>Explosion near the cloud: puff the proxy outwards for a moment.</summary>
+        /// <summary>
+        /// Explosion near the cloud: shove the proxy outwards for a moment and
+        /// permanently tear most of its density away. A blast should disperse a
+        /// smoke cloud, not inflate it into a bigger (and even more opaque) ball.
+        /// </summary>
         public void ApplyBlast(float strength)
         {
+            strength = Mathf.Clamp01(strength);
+            if (strength <= 0f)
+                return;
+
             _blast = Mathf.Max(_blast, strength);
+            _damage = Mathf.Clamp01(_damage + strength * 1.8f);
         }
 
         public static void Blast(Vector3 center, float radius, float strength)
@@ -186,7 +196,7 @@ namespace SmokeVolumetric
                 float f = 1f - Mathf.Clamp01(dist / (radius + v._radius));
                 if (f <= 0f)
                     continue;
-                v.ApplyBlast(strength * f);
+                v.ApplyBlast(strength * f * f);
             }
         }
 
@@ -222,11 +232,14 @@ namespace SmokeVolumetric
             float creep = 1f + 0.10f * Mathf.Clamp01(_age / lifetime);
             _radius = Mathf.LerpUnclamped(startRadius, maxRadius, e) * creep;
 
-            // an explosion nearby puffs the proxy outwards for a moment
+            // a blast permanently collapses the shell it tore open
+            _radius *= Mathf.Lerp(1f, 0.60f, _damage);
+
+            // ...and gives it one short outward kick while the smoke blows apart
             if (_blast > 0.001f)
             {
-                _blast *= Mathf.Exp(-Time.deltaTime * 2.4f);
-                _radius += _blast;
+                _blast *= Mathf.Exp(-Time.deltaTime * 3.2f);
+                _radius += _blast * 0.7f;
             }
             _spread = _radius;
 
@@ -236,8 +249,10 @@ namespace SmokeVolumetric
                 fade = Mathf.Clamp01(1f - (_age - (lifetime - fadeTime)) / fadeTime);
             fade = Mathf.SmoothStep(0f, 1f, fade);
 
-            // density ramps in quickly but not instantly
-            _densityMul = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(_age / 0.30f));
+            // density ramps in quickly but not instantly, and a blast leaves
+            // behind only thin wisps instead of a denser, bigger cloud
+            _densityMul = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(_age / 0.30f))
+                        * Mathf.Lerp(1f, 0.06f, _damage);
 
             // gentle buoyancy
             float rise = riseDistance * (1f - Mathf.Exp(-_age * 0.35f));

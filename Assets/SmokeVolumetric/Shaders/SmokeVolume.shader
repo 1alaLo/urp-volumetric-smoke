@@ -201,10 +201,23 @@ Shader "SmokeVolumetric/SmokeVolume"
             }
 
             // Bullet tunnels / blast craters are capsules carved out of the field.
+            // A clean capsule reads as a laser-cut cylinder, so the wall of the
+            // hole is displaced by noise and broken into lobes: the channel stays
+            // clear at its core while the rim frays into torn wisps.
             float ImpulseMask(float3 p)
             {
-                float hole = 0.0;
                 int n = (int)_ImpulseCount;
+                if (n <= 0)
+                    return 0.0;
+
+                // one shared noise tap (features ~0.4 m) instead of one per hole
+                float rough = SAMPLE_TEXTURE3D_LOD(_NoiseTex, sampler_NoiseTex,
+                                                   p * 2.25 + float3(0.17, 0.53, 0.81), 0).r;
+
+                // cheap high-frequency breakup, used to chew the rim
+                float tear = 0.5 + 0.5 * sin(p.x * 11.7 + p.y * 7.3 + p.z * 9.1 + rough * 12.6);
+
+                float hole = 0.0;
                 [loop]
                 for (int i = 0; i < n; i++)
                 {
@@ -212,8 +225,19 @@ Shader "SmokeVolumetric/SmokeVolume"
                     float4 b = _ImpulseB[i];
                     float3 ab = b.xyz - a.xyz;
                     float  t  = saturate(dot(p - a.xyz, ab) / max(dot(ab, ab), 1e-4));
-                    float  dist = length(p - (a.xyz + ab * t));
-                    hole = max(hole, saturate(1.0 - dist / max(a.w, 1e-3)) * b.w);
+                    float3 c  = a.xyz + ab * t;
+                    float  dist = length(p - c);
+
+                    // angular lobes + noise-displaced radius: the tunnel is not round
+                    float ang = atan2(p.z - c.z, p.x - c.x);
+                    float lobe = 0.74 + 0.50 * rough + 0.18 * sin(ang * 5.0 + i * 1.9);
+                    float radius = max(a.w * lobe, 1e-3);
+
+                    // pull the isosurface in and out along the shaft so the hole
+                    // opens in ragged chunks instead of a perfect cone
+                    dist += (tear - 0.5) * a.w * 0.55;
+
+                    hole = max(hole, saturate(1.0 - dist / radius) * b.w);
                 }
                 return hole;
             }
@@ -228,7 +252,7 @@ Shader "SmokeVolumetric/SmokeVolume"
                     d *= SceneMask(p);
 
                 if (_ImpulseCount > 0.5)
-                    d *= saturate(1.0 - ImpulseMask(p) * 1.6);
+                    d *= saturate(1.0 - ImpulseMask(p) * 1.7);
 
                 return d;
             }

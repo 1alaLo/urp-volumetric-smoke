@@ -120,7 +120,11 @@ namespace SmokeVolumetric
                 if (end - start < 0.25f)
                     continue;
 
-                SmokeImpulses.Add(origin + dir * start, origin + dir * end, holeRadius, holeLife);
+                // per-shot jitter: two rounds in the same spot should not punch
+                // an identical hole
+                float r = holeRadius * Random.Range(0.82f, 1.18f);
+                float life = holeLife * Random.Range(0.85f, 1.15f);
+                SmokeImpulses.Add(origin + dir * start, origin + dir * end, r, life);
             }
         }
 

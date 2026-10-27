@@ -55,6 +55,12 @@ namespace SmokeVolumetric
             }
         }
 
+        /// <summary>Flashbang: a hard, short white burst rather than a fireball.</summary>
+        public static void Flash(Vector3 position)
+        {
+            Play(position, new Color(1f, 0.98f, 0.94f), 26f, 26f, 0.22f);
+        }
+
         static void Play(Vector3 position, Color color, float intensity, float range, float life)
         {
             var host = EnsureHost();

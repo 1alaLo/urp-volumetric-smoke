@@ -10,9 +10,9 @@ namespace SmokeVolumetric
     [RequireComponent(typeof(Rigidbody))]
     public class FragGrenade : MonoBehaviour
     {
-        public float blastRadius = 4.6f;
-        public float smokePushRadius = 9f;
-        public float smokePushStrength = 2.6f;
+        public float blastRadius = 5f;
+        public float smokePushRadius = 10f;
+        public float smokePushStrength = 1f;
 
         static Material s_BodyMaterial;
         float _spawnTime;

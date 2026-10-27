@@ -38,6 +38,11 @@ namespace SmokeVolumetric.EditorTools
             var metalMat = MakeLit("SmokeDemo_Metal", new Color(0.38f, 0.40f, 0.43f), 0.62f, 0.75f, null, Vector2.one);
             var targetMat = MakeLit("SmokeDemo_Target", new Color(0.66f, 0.13f, 0.11f), 0.34f, 0f, null, Vector2.one);
 
+            // painted container steel: gives the alley/bunker/catwalk their own
+            // zone colour so the arena reads as several spaces, not one slab
+            var accentMat = MakeLit("SmokeDemo_Accent", new Color(0.18f, 0.31f, 0.33f), 0.34f, 0.25f, grid, new Vector2(2f, 2f));
+            var crateMatB = MakeLit("SmokeDemo_CrateB", new Color(0.30f, 0.36f, 0.30f), 0.22f, 0f, null, Vector2.one);
+
             var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
 
             SetupEnvironment();
@@ -68,7 +73,7 @@ namespace SmokeVolumetric.EditorTools
             // ---- crates (right) ---------------------------------------------
             Box("Crate_A", new Vector3(7f, 0.55f, 0f), new Vector3(1.7f, 1.1f, 1.7f), crateMat, arena);
             Box("Crate_B", new Vector3(8.9f, 0.55f, 1.3f), new Vector3(1.7f, 1.1f, 1.7f), crateMat, arena);
-            Box("Crate_C", new Vector3(7f, 1.65f, 0f), new Vector3(1.7f, 1.1f, 1.7f), crateMat, arena);
+            Box("Crate_C", new Vector3(7f, 1.65f, 0f), new Vector3(1.7f, 1.1f, 1.7f), crateMatB, arena);
 
             // ---- tower / pillars --------------------------------------------
             Box("Tower", new Vector3(8f, 3f, 12f), new Vector3(5f, 6f, 5f), wallMat, arena);
@@ -82,6 +87,63 @@ namespace SmokeVolumetric.EditorTools
 
             // ---- reference target behind the cover ---------------------------
             Box("Target", new Vector3(0f, 1.15f, 2f), new Vector3(0.9f, 2.3f, 0.9f), targetMat, arena);
+
+            // ---- raised catwalk with stairs ----------------------------------
+            // Multi-level geometry: smoke thrown under the deck hugs its underside,
+            // and the deck itself breaks sightlines across the north side.
+            Box("Catwalk", new Vector3(3.5f, 3.35f, 8f), new Vector3(9f, 0.5f, 2.6f), metalMat, arena);
+            Box("CatwalkRail_N", new Vector3(3.5f, 3.9f, 9.2f), new Vector3(9f, 0.6f, 0.12f), accentMat, arena);
+            Box("CatwalkRail_S", new Vector3(3.5f, 3.9f, 6.8f), new Vector3(9f, 0.6f, 0.12f), accentMat, arena);
+            Box("CatwalkLeg_W", new Vector3(-0.7f, 1.6f, 8f), new Vector3(0.6f, 3.2f, 0.6f), accentMat, arena);
+            Box("CatwalkLeg_E", new Vector3(7.7f, 1.6f, 8f), new Vector3(0.6f, 3.2f, 0.6f), accentMat, arena);
+            for (int i = 0; i < 9; i++)
+            {
+                float h = 3.55f - i * 0.4f;
+                Box("CatwalkStep_" + i, new Vector3(-1.35f - i * 0.5f, h * 0.5f, 8f),
+                    new Vector3(0.5f, h, 2.2f), accentMat, arena);
+            }
+
+            // ---- covered alley: smoke can only escape through the two ends ----
+            var alley = new GameObject("Alley").transform;
+            alley.SetParent(arena, false);
+            Box("Alley_W", new Vector3(11.2f, 1.5f, 2.5f), new Vector3(0.4f, 3f, 9f), accentMat, alley);
+            Box("Alley_E", new Vector3(15.2f, 1.5f, 2.5f), new Vector3(0.4f, 3f, 9f), accentMat, alley);
+            Box("Alley_Roof", new Vector3(13.2f, 3.15f, 2.5f), new Vector3(4.4f, 0.3f, 9.4f), metalMat, alley);
+            Box("Alley_Fascia_W", new Vector3(11.2f, 3.05f, 2.5f), new Vector3(0.16f, 0.5f, 9.4f), accentMat, alley);
+            Box("Alley_Fascia_E", new Vector3(15.2f, 3.05f, 2.5f), new Vector3(0.16f, 0.5f, 9.4f), accentMat, alley);
+            Cylinder("Barrel_D", new Vector3(13.2f, 0.6f, 4.8f), new Vector3(0.9f, 0.6f, 0.9f), metalMat, alley);
+            Cylinder("Barrel_E", new Vector3(14.1f, 0.6f, 5.6f), new Vector3(0.9f, 0.6f, 0.9f), metalMat, alley);
+
+            // ---- open-front bunker -------------------------------------------
+            // Three walls and a roof: a smoke cloud dropped inside is trapped and
+            // pours out of the single open face.
+            var bunker = new GameObject("Bunker").transform;
+            bunker.SetParent(arena, false);
+            Box("Bunker_W", new Vector3(-7.2f, 1.6f, 13.1f), new Vector3(0.4f, 3.2f, 5f), accentMat, bunker);
+            Box("Bunker_E", new Vector3(-1.2f, 1.6f, 13.1f), new Vector3(0.4f, 3.2f, 5f), accentMat, bunker);
+            Box("Bunker_N", new Vector3(-4.2f, 1.6f, 15.4f), new Vector3(6.4f, 3.2f, 0.4f), accentMat, bunker);
+            Box("Bunker_Roof", new Vector3(-4.2f, 3.35f, 13.2f), new Vector3(6.4f, 0.3f, 5.2f), metalMat, bunker);
+            Box("Bunker_Lintel", new Vector3(-4.2f, 3.0f, 10.75f), new Vector3(6.4f, 0.5f, 0.25f), accentMat, bunker);
+            Box("BunkerBench", new Vector3(-4.2f, 0.4f, 14.2f), new Vector3(4.6f, 0.8f, 1.2f), crateMatB, bunker);
+
+            // ---- raised loading platform -------------------------------------
+            Box("Platform", new Vector3(-3.5f, 0.5f, -7.5f), new Vector3(5f, 1f, 4f), wallMat, arena);
+            Box("Crate_D", new Vector3(-4.6f, 1.55f, -7.6f), new Vector3(1.7f, 1.1f, 1.7f), crateMat, arena);
+            Box("Crate_E", new Vector3(-2.5f, 1.55f, -8.2f), new Vector3(1.4f, 1.1f, 1.4f), crateMatB, arena);
+
+            // ---- extra props / sightline breakers ----------------------------
+            Box("Cover_E", new Vector3(11.6f, 0.7f, -4.6f), new Vector3(4.2f, 1.4f, 0.6f), wallMat, arena);
+            Box("Crate_F", new Vector3(9.8f, 0.55f, -3.4f), new Vector3(1.6f, 1.1f, 1.6f), crateMat, arena);
+            Box("Crate_G", new Vector3(9.8f, 1.65f, -3.4f), new Vector3(1.6f, 1.1f, 1.6f), crateMatB, arena);
+
+            // ---- practical lights -------------------------------------------
+            // Covered zones are otherwise pitch black, which hides the smoke.
+            Lamp("AlleyLamp_A", new Vector3(13.2f, 2.55f, 6.4f), new Color(1f, 0.85f, 0.63f), 4.5f, 8f, alley);
+            Box("AlleyLampHousing_A", new Vector3(13.2f, 2.64f, 6.4f), new Vector3(1.1f, 0.08f, 0.22f), metalMat, alley);
+            Lamp("AlleyLamp_B", new Vector3(13.2f, 2.55f, 1.2f), new Color(1f, 0.85f, 0.63f), 4.5f, 8f, alley);
+            Box("AlleyLampHousing_B", new Vector3(13.2f, 2.64f, 1.2f), new Vector3(1.1f, 0.08f, 0.22f), metalMat, alley);
+            Lamp("BunkerLamp", new Vector3(-4.2f, 2.95f, 13.2f), new Color(1f, 0.83f, 0.60f), 5f, 8f, bunker);
+            Box("BunkerLampHousing", new Vector3(-4.2f, 3.04f, 13.2f), new Vector3(1.1f, 0.08f, 0.22f), metalMat, bunker);
 
             // ---- smoke room: 5 x 5 x 3.2 m, one doorway facing the arena -----
             // Proves the two things a sphere cannot do: the cloud stops dead at
@@ -233,6 +295,20 @@ namespace SmokeVolumetric.EditorTools
             go.GetComponent<MeshRenderer>().sharedMaterial = mat;
             go.isStatic = true;
             return go;
+        }
+
+        static void Lamp(string name, Vector3 pos, Color color, float intensity, float range, Transform parent)
+        {
+            var go = new GameObject(name);
+            go.transform.SetParent(parent, false);
+            go.transform.position = pos;
+
+            var light = go.AddComponent<Light>();
+            light.type = LightType.Point;
+            light.color = color;
+            light.intensity = intensity;
+            light.range = range;
+            light.shadows = LightShadows.Soft;
         }
 
         // ------------------------------------------------------------------

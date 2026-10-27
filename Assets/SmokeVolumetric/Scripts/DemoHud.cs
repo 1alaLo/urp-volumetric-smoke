@@ -24,6 +24,7 @@ namespace SmokeVolumetric
 
             DrawCrosshair();
             DrawPanel();
+            DrawFlash();
         }
 
         void EnsureStyles()
@@ -84,11 +85,29 @@ namespace SmokeVolumetric
             GUI.DrawTexture(new Rect(cx + gap + expand, cy - thick * 0.5f, len, thick), Texture2D.whiteTexture);
         }
 
+        void DrawFlash()
+        {
+            var player = FpsPlayer.Instance;
+            if (player == null)
+                return;
+
+            float f = player.FlashAmount;
+            if (f <= 0.001f)
+                return;
+
+            // the peak is instant, then a long tail: pow keeps the first frames
+            // fully white while the after-image lingers
+            var prev = GUI.color;
+            GUI.color = new Color(1f, 1f, 1f, Mathf.Clamp01(Mathf.Pow(f, 1.35f) * 1.08f));
+            GUI.DrawTexture(new Rect(0f, 0f, Screen.width, Screen.height), Texture2D.whiteTexture);
+            GUI.color = prev;
+        }
+
         void DrawPanel()
         {
             const float x = 18f;
             const float y = 18f;
-            const float w = 420f;
+            const float w = 470f;
             const float h = 128f;
 
             var prevColor = GUI.color;
@@ -106,17 +125,18 @@ namespace SmokeVolumetric
 
             GUI.Label(new Rect(tx, ty, w - 20f, 20f), "<b>WASD</b> move   <b>Shift</b> sprint   <b>Space</b> jump", _small);
             ty += 18f;
-            GUI.Label(new Rect(tx, ty, w - 20f, 20f), "<b>LMB</b> fire   <b>RMB</b> smoke grenade   <b>F</b> frag grenade", _small);
+            GUI.Label(new Rect(tx, ty, w - 20f, 20f), "<b>LMB</b> fire   <b>RMB</b> smoke   <b>G</b> flashbang   <b>F</b> frag", _small);
             ty += 18f;
             GUI.Label(new Rect(tx, ty, w - 20f, 20f), "<b>C</b> clear smoke   <b>R</b> respawn   <b>Esc</b> free cursor", _small);
             ty += 22f;
 
             var player = FpsPlayer.Instance;
             string stats = string.Format(
-                "clouds <b>{0}</b>   smoke <b>{1}</b>   frags <b>{2}</b>   shots <b>{3}</b>   {4:0} fps",
+                "clouds <b>{0}</b>   smoke <b>{1}</b>   frags <b>{2}</b>   flashes <b>{3}</b>   shots <b>{4}</b>   {5:0} fps",
                 SmokeVolume.ActiveCount,
                 player != null ? player.GrenadesThrown : 0,
                 player != null ? player.FragsThrown : 0,
+                player != null ? player.FlashesThrown : 0,
                 player != null ? player.ShotsFired : 0,
                 _fps);
 

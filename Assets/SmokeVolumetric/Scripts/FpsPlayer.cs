@@ -38,9 +38,13 @@ namespace SmokeVolumetric
 
         public int GrenadesThrown { get; private set; }
         public int FragsThrown { get; private set; }
+        public int FlashesThrown { get; private set; }
         public int ShotsFired => _weapon != null ? _weapon.ShotsFired : 0;
         public float CooldownRemaining => Mathf.Max(0f, _nextThrow - Time.time);
         public float BobOffset { get; private set; }
+
+        /// <summary>0..1 white-out from a flashbang; decays in Update.</summary>
+        public float FlashAmount => _flash;
 
         CharacterController _cc;
         Weapon _weapon;
@@ -57,6 +61,7 @@ namespace SmokeVolumetric
         float _shakeAmp;
         float _shakeTime;
         float _shakeDur;
+        float _flash;
 
         void Awake()
         {
@@ -122,6 +127,9 @@ namespace SmokeVolumetric
             }
 
             // ---- move ----
+            if (_cc == null || !_cc.enabled)
+                return;
+
             Vector2 input = Vector2.zero;
             if (locked && kb != null)
             {
@@ -175,11 +183,27 @@ namespace SmokeVolumetric
             if (locked && kb.fKey.wasPressedThisFrame)
                 ThrowFrag();
 
+            if (locked && kb.gKey.wasPressedThisFrame)
+                ThrowFlash();
+
             if (locked && kb.cKey.wasPressedThisFrame)
                 ClearSmoke();
 
             if (locked && kb.rKey.wasPressedThisFrame)
                 Respawn();
+
+            // flashbang white-out decays on its own, faster than it bloomed
+            if (_flash > 0f)
+            {
+                _flash *= Mathf.Exp(-Time.deltaTime * 1.7f);
+                if (_flash < 0.005f)
+                    _flash = 0f;
+            }
+        }
+
+        public void AddFlash(float amount)
+        {
+            _flash = Mathf.Clamp01(Mathf.Max(_flash, amount));
         }
 
         public void AddShake(float amplitude, float duration)
@@ -290,6 +314,22 @@ namespace SmokeVolumetric
             float flight = Mathf.Lerp(0.9f, 1.35f, Mathf.InverseLerp(5f, 12f, Vector3.Distance(from, target)));
 
             FragGrenade.Throw(from, target, flight);
+        }
+
+        void ThrowFlash()
+        {
+            if (Time.time < _nextThrow)
+                return;
+
+            _nextThrow = Time.time + throwCooldown;
+            FlashesThrown++;
+
+            Transform aim = _cam != null ? _cam.transform : transform;
+            Vector3 target = SolveBurstPoint(7f, 15f, 1.6f);
+            Vector3 from = aim.position + aim.forward * 0.45f - Vector3.up * 0.06f;
+            float flight = Mathf.Lerp(1.0f, 1.5f, Mathf.InverseLerp(7f, 15f, Vector3.Distance(from, target)));
+
+            FlashGrenade.Throw(from, target, flight);
         }
 
         void ClearSmoke()
